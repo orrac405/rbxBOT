@@ -1,53 +1,54 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const { MongoClient } = require('mongodb');
+const { Client, GatewayIntentBits, Events } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const { Client, GatewayIntentBits, Events } = require('discord.js');
 
 const app = express();
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 app.use(bodyParser.json());
 
-// Path to data file
-const filePath = path.join(__dirname, 'playerData.json');
+// MongoDB connection URI
+const uri = 'mongodb+srv://uptrical:baba@guildcode.nnxcj.mongodb.net/';
+
+// Create a new MongoClient
+const mongoClient = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+
+let db, collection;
+
+// Connect to MongoDB
+mongoClient.connect(err => {
+    if (err) {
+        console.error('Failed to connect to MongoDB', err);
+        process.exit(1);
+    }
+    db = mongoClient.db('YOUR_DATABASE_NAME'); // Replace with your database name
+    collection = db.collection('playerData'); // Replace with your collection name
+    console.log('Connected to MongoDB');
+});
 
 // Express.js Server: Handling HTTP Request and Saving Data
-app.post('/save', (req, res) => {
+app.post('/save', async (req, res) => {
     const newData = req.body;
 
-    // Read existing data
-    fs.readFile(filePath, 'utf8', (err, data) => {
-        let existingData = [];
-        if (!err && data) {
-            try {
-                existingData = JSON.parse(`[${data.trim().replace(/\n/g, ',')}]`); // Convert log to array
-            } catch (parseErr) {
-                console.error('Failed to parse existing data', parseErr);
-                existingData = [];
+    try {
+        // Upsert data (insert or update)
+        const bulkOps = newData.map(entry => ({
+            updateOne: {
+                filter: { userId: entry.userId },
+                update: { $set: entry },
+                upsert: true
             }
-        }
+        }));
 
-        // Create a map for quick lookup
-        const dataMap = new Map();
-        existingData.forEach(entry => dataMap.set(entry.userId, entry));
-
-        // Update or add new data
-        newData.forEach(entry => dataMap.set(entry.userId, entry));
-
-        // Convert map back to array
-        const updatedData = Array.from(dataMap.values());
-
-        // Write updated data to file
-        fs.writeFile(filePath, updatedData.map(entry => JSON.stringify(entry)).join('\n'), (writeErr) => {
-            if (writeErr) {
-                console.error('Failed to save data', writeErr);
-                res.status(500).send('Failed to save data');
-            } else {
-                res.status(200).send('Data saved');
-            }
-        });
-    });
+        await collection.bulkWrite(bulkOps);
+        res.status(200).send('Data saved');
+    } catch (err) {
+        console.error('Failed to save data', err);
+        res.status(500).send('Failed to save data');
+    }
 });
 
 app.listen(3000, () => {
@@ -58,22 +59,32 @@ app.listen(3000, () => {
 client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user.tag}!`);
 });
-client.on(Events.MessageCreate, message => {
+client.on(Events.MessageCreate, async message => {
     if (message.content === '!dakika-info') {
-        fs.access(filePath, fs.constants.F_OK, (err) => {
-            if (err) {
-                console.error('Failed to access file', err);
-                message.channel.send('Veri dosyası bulunamadı.');
-            } else {
-                message.channel.send({
-                    files: [{
-                        attachment: filePath,
-                        name: 'playerData.txt'
-                    }]
-                });
-            }
-        });
+        try {
+            const data = await collection.find({}).toArray();
+            const dataString = data.map(entry => JSON.stringify(entry)).join('\n');
+
+            const filePath = path.join(__dirname, 'playerData.txt');
+            fs.writeFile(filePath, dataString, (err) => {
+                if (err) {
+                    console.error('Failed to write file', err);
+                    message.channel.send('Veri dosyası yazılamadı.');
+                } else {
+                    message.channel.send({
+                        files: [{
+                            attachment: filePath,
+                            name: 'playerData.txt'
+                        }]
+                    });
+                }
+            });
+        } catch (err) {
+            console.error('Failed to fetch data', err);
+            message.channel.send('Veri alınamadı.');
+        }
     }
 });
+
 // Replace 'YOUR_BOT_TOKEN' with your actual bot token
 client.login(process.env.token);
