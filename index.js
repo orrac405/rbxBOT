@@ -19,13 +19,20 @@ const mongoClient = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopo
 let db, collection;
 
 // Connect to MongoDB
-mongoClient.connect(err => {
+mongoClient.connect(async err => {
     if (err) {
         console.error('Failed to connect to MongoDB', err);
         process.exit(1);
     }
     db = mongoClient.db('YOUR_DATABASE_NAME'); // Replace with your database name
     collection = db.collection('playerData'); // Replace with your collection name
+
+    // Ensure collection is created
+    const collections = await db.listCollections({ name: 'playerData' }).toArray();
+    if (collections.length === 0) {
+        await db.createCollection('playerData');
+    }
+
     console.log('Connected to MongoDB');
 });
 
